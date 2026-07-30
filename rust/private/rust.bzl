@@ -578,6 +578,18 @@ def _rust_test_impl(ctx):
             rust_test_bin_rloc = ctx.workspace_name + "/" + test_bin_short
         env["RUST_TEST_BIN"] = rust_test_bin_rloc
 
+        # RUST_TEST_BIN above is runfiles-relative (workspace-prefixed) and is
+        # only valid when resolved against RUNFILES_DIR. Bazel's coverage
+        # postprocessing step may run with RUNFILES_DIR unset (e.g.
+        # --experimental_split_coverage_postprocessing), in which case
+        # collect_coverage needs the real binary's location relative to the
+        # execroot instead. `output.path` already gives us that exact path
+        # (e.g. "bazel-out/<config>/bin/<pkg>/<name>"), so hand it over
+        # directly rather than have collect_coverage try to reconstruct it
+        # from the workspace-prefixed runfiles path (which drops/misplaces
+        # the workspace segment and points at a path that doesn't exist).
+        env["RUST_TEST_BIN_EXECROOT_PATH"] = output.path
+
         junit_runner = ctx.actions.declare_file(ctx.label.name + "_junit_runner" + toolchain.binary_ext)
         ctx.actions.symlink(
             output = junit_runner,

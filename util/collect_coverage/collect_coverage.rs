@@ -145,29 +145,40 @@ fn main() {
     };
     // When the JUnit runner wraps the test, TEST_BINARY points to the runner
     // and RUST_TEST_BIN holds the actual instrumented binary that llvm-cov needs.
+    //
+    // RUST_TEST_BIN is runfiles-relative (workspace-prefixed) and only
+    // resolves correctly against RUNFILES_DIR. RUST_TEST_BIN_EXECROOT_PATH is
+    // the same binary's path relative to the execroot, computed directly by
+    // Starlark from the output file (so it can't drop or misplace the
+    // workspace-name segment the way reconstructing it here from
+    // COVERAGE_DIR + RUST_TEST_BIN could). Prefer the runfiles-relative
+    // lookup when RUNFILES_DIR is available, and fall back to the
+    // execroot-relative path otherwise (e.g. under
+    // --experimental_split_coverage_postprocessing, where RUNFILES_DIR is
+    // unset).
     let test_binary = if let Ok(rust_test_bin) = env::var("RUST_TEST_BIN") {
         debug_log!("Using RUST_TEST_BIN: {}", rust_test_bin);
+        let execroot_fallback = || {
+            env::var("RUST_TEST_BIN_EXECROOT_PATH")
+                .map(|p| execroot.join(p))
+                .unwrap_or_else(|_| {
+                    let bin_dir = config_bin_dir(&execroot, &coverage_dir);
+                    execroot.join(bin_dir).join(&rust_test_bin)
+                })
+        };
         match runfiles_dir {
             Some(ref rd) => {
-                let candidate = rd
-                    .join(env::var("TEST_WORKSPACE").unwrap_or_default())
-                    .join(&rust_test_bin);
+                let candidate = rd.join(&rust_test_bin);
                 if candidate.exists() {
                     candidate
                 } else {
-                    let candidate = rd.join(&rust_test_bin);
-                    if candidate.exists() {
-                        candidate
-                    } else {
-                        let bin_dir = config_bin_dir(&execroot, &coverage_dir);
-                        execroot.join(bin_dir).join(&rust_test_bin)
-                    }
+                    debug_log!(
+                        "RUST_TEST_BIN not found under RUNFILES_DIR, falling back to execroot path"
+                    );
+                    execroot_fallback()
                 }
             }
-            None => {
-                let bin_dir = config_bin_dir(&execroot, &coverage_dir);
-                execroot.join(bin_dir).join(&rust_test_bin)
-            }
+            None => execroot_fallback(),
         }
     } else {
         match runfiles_dir {
